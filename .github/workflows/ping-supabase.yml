@@ -3,29 +3,25 @@ name: Ping Supabase to Prevent Pausing
 on:
   schedule:
     # Runs at 9:00 AM UTC every Monday and Thursday
-    - cron: '0 9 * * 1,4'
-  workflow_dispatch: # Allows manual triggering from the GitHub UI
+    - cron: "0 9 * * 1,4"
+  workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout the repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Set up Node.js
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: "18"
 
-      # Step 3: Install Supabase Client
       - name: Install Supabase Client
         run: npm install @supabase/supabase-js --force
 
-      # Step 4: Ping Supabase Databases
       - name: Ping Supabase Databases
         env:
           SUPABASE_CONFIGS: ${{ secrets.SUPABASE_CONFIGS }}
@@ -35,7 +31,6 @@ jobs:
             try {
               const { createClient } = require('@supabase/supabase-js');
               
-              // Parse database configurations from JSON
               if (!process.env.SUPABASE_CONFIGS) {
                 throw new Error('Missing SUPABASE_CONFIGS secret. Please add it in GitHub Settings.');
               }
@@ -53,7 +48,6 @@ jobs:
               let successCount = 0;
               let failCount = 0;
 
-              // Ping each database
               for (let i = 0; i < configs.length; i++) {
                 const config = configs[i];
                 const dbName = config.name || 'Database ' + (i + 1);
@@ -66,11 +60,8 @@ jobs:
                     throw new Error('Missing url or key for ' + dbName);
                   }
 
-                  // Create Supabase client
                   const supabase = createClient(config.url, config.key);
 
-                  // Ping by making an actual network request to verify connectivity
-                  // We'll use a simple REST API call to check if the server is reachable
                   const startTime = Date.now();
                   const response = await fetch(config.url + '/rest/v1/', {
                     headers: {
@@ -80,7 +71,6 @@ jobs:
                   });
                   const duration = Date.now() - startTime;
 
-                  // Check if we got a response (even an error response means the server is alive)
                   if (!response.ok && response.status !== 404 && response.status !== 401) {
                     throw new Error('Server returned status ' + response.status);
                   }
@@ -94,7 +84,6 @@ jobs:
                 }
               }
 
-              // Summary
               console.log('\n' + '-'.repeat(60));
               console.log('Summary:');
               console.log('  Successful:', successCount);
@@ -117,3 +106,18 @@ jobs:
           })();
           "
 
+      - name: Notify Slack (success)
+        if: ${{ success() }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST -H "Content-type: application/json" \
+            --data "{\"text\":\"✅ Supabase keepalive succeeded for *${{ github.repository }}* (run #${{ github.run_number }}). <${RUN_URL}|View run logs>\"}" \
+            "https://hooks.slack.com/services/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"
+
+      - name: Notify Slack (failure)
+        if: ${{ failure() }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST -H "Content-type: application/json" \
+            --data "{\"text\":\"❌ Supabase keepalive failed for *${{ github.repository }}* (run #${{ github.run_number }}). <${RUN_URL}|View run logs>\"}" \
+            "https://hooks.slack.com/services/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"
