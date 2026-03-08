@@ -23,101 +23,191 @@ jobs:
         run: npm install @supabase/supabase-js --force
 
       - name: Ping Supabase Databases
+        id: ping
         env:
           SUPABASE_CONFIGS: ${{ secrets.SUPABASE_CONFIGS }}
         run: |
-          node -e "
+          node <<'NODE'
+          const fs = require("fs");
+
+          function setOutput(name, value) {
+            if (!process.env.GITHUB_OUTPUT) return;
+            const safe = String(value ?? "").replace(/\r?\n/g, " ");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${safe}\n`);
+          }
+
           (async () => {
+            let successCount = 0;
+            let failCount = 0;
+            let totalCount = 0;
+
             try {
-              const { createClient } = require('@supabase/supabase-js');
-              
               if (!process.env.SUPABASE_CONFIGS) {
-                throw new Error('Missing SUPABASE_CONFIGS secret. Please add it in GitHub Settings.');
+                throw new Error("Missing SUPABASE_CONFIGS secret. Please add it in GitHub Settings.");
               }
 
               const configs = JSON.parse(process.env.SUPABASE_CONFIGS);
-              
+
               if (!Array.isArray(configs) || configs.length === 0) {
-                throw new Error('SUPABASE_CONFIGS must be a non-empty array of database configurations');
+                throw new Error("SUPABASE_CONFIGS must be a non-empty array of database configurations.");
               }
 
-              console.log('Pinging', configs.length, 'database(s)...');
-              console.log('Timestamp:', new Date().toISOString());
-              console.log('-'.repeat(60));
-              
-              let successCount = 0;
-              let failCount = 0;
+              totalCount = configs.length;
+
+              console.log("Pinging", totalCount, "database(s)...");
+              console.log("Timestamp:", new Date().toISOString());
+              console.log("-".repeat(60));
 
               for (let i = 0; i < configs.length; i++) {
                 const config = configs[i];
-                const dbName = config.name || 'Database ' + (i + 1);
-                
+                const dbName = config.name || `Database ${i + 1}`;
+
                 try {
-                  console.log('\n[' + (i + 1) + '/' + configs.length + '] ' + dbName);
-                  console.log('URL:', config.url);
-                  
+                  console.log(`\n[${i + 1}/${configs.length}] ${dbName}`);
+                  console.log("URL:", config.url);
+
                   if (!config.url || !config.key) {
-                    throw new Error('Missing url or key for ' + dbName);
+                    throw new Error(`Missing url or key for ${dbName}`);
                   }
 
-                  const supabase = createClient(config.url, config.key);
-
                   const startTime = Date.now();
-                  const response = await fetch(config.url + '/rest/v1/', {
+                  const response = await fetch(`${config.url}/rest/v1/`, {
                     headers: {
-                      'apikey': config.key,
-                      'Authorization': 'Bearer ' + config.key
+                      apikey: config.key,
+                      Authorization: `Bearer ${config.key}`
                     }
                   });
                   const duration = Date.now() - startTime;
 
+                  // Any response means host is alive; allow auth/not-found responses too.
                   if (!response.ok && response.status !== 404 && response.status !== 401) {
-                    throw new Error('Server returned status ' + response.status);
+                    throw new Error(`Server returned status ${response.status}`);
                   }
-                  
-                  console.log('Success! Response time:', duration + 'ms');
+
+                  console.log(`Success! Response time: ${duration}ms`);
                   successCount++;
-                  
                 } catch (err) {
-                  console.error('Failed:', err.message);
+                  console.error("Failed:", err.message);
                   failCount++;
                 }
               }
 
-              console.log('\n' + '-'.repeat(60));
-              console.log('Summary:');
-              console.log('  Successful:', successCount);
-              console.log('  Failed:', failCount);
-              console.log('  Total:', configs.length);
-              
+              console.log("\n" + "-".repeat(60));
+              console.log("Summary:");
+              console.log("  Successful:", successCount);
+              console.log("  Failed:", failCount);
+              console.log("  Total:", totalCount);
+
+              setOutput("success_count", successCount);
+              setOutput("fail_count", failCount);
+              setOutput("total_count", totalCount);
+              setOutput("error_message", "");
+
               if (failCount > 0) {
-                console.error('\nSome databases failed to ping');
                 process.exit(1);
               }
-              
-              console.log('\nAll databases pinged successfully!');
-              
+
+              console.log("\nAll databases pinged successfully!");
             } catch (err) {
-              console.error('\nFatal error:', err.message);
-              console.error('Make sure SUPABASE_CONFIGS is set as a JSON array:');
-              console.error('[{\"name\":\"My DB\",\"url\":\"https://xxx.supabase.co\",\"key\":\"your-key\"}]');
+              console.error("\nFatal error:", err.message);
+              console.error("Make sure SUPABASE_CONFIGS is set as a JSON array:");
+              console.error('[{"name":"My DB","url":"https://xxx.supabase.co","key":"your-key"}]');
+
+              setOutput("success_count", successCount);
+              setOutput("fail_count", failCount);
+              setOutput("total_count", totalCount);
+              setOutput("error_message", err.message);
+
               process.exit(1);
             }
           })();
-          "
+          NODE
 
-      - name: Notify Slack (success)
-        if: ${{ success() }}
+      - name: Notify Slack
+        if: ${{ always() }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+          SUCCESS_COUNT: ${{ steps.ping.outputs.success_count }}
+          FAIL_COUNT: ${{ steps.ping.outputs.fail_count }}
+          TOTAL_COUNT: ${{ steps.ping.outputs.total_count }}
+          ERROR_MESSAGE: ${{ steps.ping.outputs.error_message }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          curl -sS -X POST -H "Content-type: application/json" \
-            --data "{\"text\":\"✅ Supabase keepalive succeeded for *${{ github.repository }}* (run #${{ github.run_number }}). <${RUN_URL}|View run logs>\"}" \
-            "https://hooks.slack.com/services/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"
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is not set. Skipping Slack notification."
+            exit 0
+          fi
 
-      - name: Notify Slack (failure)
-        if: ${{ failure() }}
-        run: |
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          curl -sS -X POST -H "Content-type: application/json" \
-            --data "{\"text\":\"❌ Supabase keepalive failed for *${{ github.repository }}* (run #${{ github.run_number }}). <${RUN_URL}|View run logs>\"}" \
-            "https://hooks.slack.com/services/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"
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          NOW_UTC="$(date -u '+%Y-%m-%d %H:%M:%SZ')"
+
+          [ -z "$SUCCESS_COUNT" ] && SUCCESS_COUNT="0"
+          [ -z "$FAIL_COUNT" ] && FAIL_COUNT="0"
+          [ -z "$TOTAL_COUNT" ] && TOTAL_COUNT="0"
+
+          if [ "$EVENT_NAME" = "schedule" ] && [ -n "$EVENT_SCHEDULE" ]; then
+            TRIGGER="$EVENT_NAME ($EVENT_SCHEDULE)"
+          else
+            TRIGGER="$EVENT_NAME"
+          fi
+
+          if [ "$JOB_STATUS" = "success" ]; then
+            EMOJI="✅"
+            STATUS_TEXT="SUCCESS"
+          else
+            EMOJI="❌"
+            STATUS_TEXT="FAILURE"
+          fi
+
+          SAFE_ERROR="$(printf '%s' "$ERROR_MESSAGE" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+
+          if [ -n "$SAFE_ERROR" ]; then
+            ERROR_SECTION=',{"type":"section","text":{"type":"mrkdwn","text":"*Error:* `'"$SAFE_ERROR"'`"}}'
+          else
+            ERROR_SECTION=''
+          fi
+
+          cat > payload.json <<EOF
+          {
+            "text": "$EMOJI Supabase keepalive $STATUS_TEXT for ${{ github.repository }}",
+            "blocks": [
+              {
+                "type": "header",
+                "text": { "type": "plain_text", "text": "$EMOJI Supabase keepalive $STATUS_TEXT" }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  { "type": "mrkdwn", "text": "*Repository:*\\n\`${{ github.repository }}\`" },
+                  { "type": "mrkdwn", "text": "*Workflow:*\\n\`${{ github.workflow }}\`" },
+                  { "type": "mrkdwn", "text": "*Status:*\\n$STATUS_TEXT" },
+                  { "type": "mrkdwn", "text": "*Trigger:*\\n\`$TRIGGER\`" },
+                  { "type": "mrkdwn", "text": "*Actor:*\\n\`${{ github.actor }}\`" },
+                  { "type": "mrkdwn", "text": "*Branch:*\\n\`${{ github.ref_name }}\`" },
+                  { "type": "mrkdwn", "text": "*Commit:*\\n<${COMMIT_URL}|\`${SHORT_SHA}\`>" },
+                  { "type": "mrkdwn", "text": "*Ping Summary:*\\n\`${SUCCESS_COUNT} ok / ${FAIL_COUNT} failed / ${TOTAL_COUNT} total\`" }
+                ]
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Run:* <${RUN_URL}|#${{ github.run_number }} (attempt ${{ github.run_attempt }})>"
+                }
+              }
+              $ERROR_SECTION,
+              {
+                "type": "context",
+                "elements": [
+                  { "type": "mrkdwn", "text": "Generated at ${NOW_UTC}" }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          curl -sS -X POST -H "Content-type: application/json" --data @payload.json "$SLACK_WEBHOOK_URL"
