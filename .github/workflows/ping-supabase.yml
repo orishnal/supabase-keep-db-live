@@ -99,6 +99,7 @@ jobs:
           let successCount = 0;
           let failCount = 0;
           let totalCount = 0;
+          let projectList = "";
 
           try {
           if (!process.env.SUPABASE_CONFIGS) {
@@ -112,8 +113,16 @@ jobs:
           }
 
           totalCount = configs.length;
+          projectList = configs
+            .map((config, index) => {
+              const name = config.name || `Database ${index + 1}`;
+              const url = String(config.url || "").replace(/\/$/, "");
+              return `${name} - ${url}`;
+            })
+            .join(" | ");
 
           console.log("Pinging", totalCount, "database(s)...");
+          console.log("Projects:", projectList);
           console.log("Timestamp:", new Date().toISOString());
           console.log("-".repeat(60));
 
@@ -136,6 +145,7 @@ jobs:
           setOutput("success_count", successCount);
           setOutput("fail_count", failCount);
           setOutput("total_count", totalCount);
+          setOutput("project_list", projectList);
           setOutput("error_message", "");
 
           if (failCount > 0) {
@@ -151,6 +161,7 @@ jobs:
           setOutput("success_count", successCount);
           setOutput("fail_count", failCount);
           setOutput("total_count", totalCount);
+          setOutput("project_list", projectList);
           setOutput("error_message", err.message);
 
           process.exit(1);
