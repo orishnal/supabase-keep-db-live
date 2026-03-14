@@ -166,6 +166,7 @@ jobs:
           SUCCESS_COUNT: ${{ steps.ping.outputs.success_count }}
           FAIL_COUNT: ${{ steps.ping.outputs.fail_count }}
           TOTAL_COUNT: ${{ steps.ping.outputs.total_count }}
+          PROJECT_LIST: ${{ steps.ping.outputs.project_list }}
           ERROR_MESSAGE: ${{ steps.ping.outputs.error_message }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SCHEDULE: ${{ github.event.schedule }}
@@ -199,11 +200,18 @@ jobs:
           fi
 
           SAFE_ERROR="$(printf '%s' "$ERROR_MESSAGE" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+          SAFE_PROJECT_LIST="$(printf '%s' "$PROJECT_LIST" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 
           if [ -n "$SAFE_ERROR" ]; then
             ERROR_SECTION=',{"type":"section","text":{"type":"mrkdwn","text":"*Error:* `'"$SAFE_ERROR"'`"}}'
           else
             ERROR_SECTION=''
+          fi
+
+          if [ -n "$SAFE_PROJECT_LIST" ]; then
+            PROJECT_SECTION=',{"type":"section","text":{"type":"mrkdwn","text":"*Projects hit:*\n'"$SAFE_PROJECT_LIST"'"}}'
+          else
+            PROJECT_SECTION=''
           fi
 
           cat > payload.json <<EOF
@@ -234,6 +242,7 @@ jobs:
                   "text": "*Run:* <${RUN_URL}|#${{ github.run_number }} (attempt ${{ github.run_attempt }})>"
                 }
               }
+              $PROJECT_SECTION
               $ERROR_SECTION,
               {
                 "type": "context",
