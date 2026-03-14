@@ -16,11 +16,6 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
 
       - name: Ping Supabase Databases
         id: ping
@@ -187,82 +182,107 @@ jobs:
             exit 0
           fi
 
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
-          SHORT_SHA="${GITHUB_SHA::7}"
-          NOW_UTC="$(date -u '+%Y-%m-%d %H:%M:%SZ')"
+          export RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          export COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          export SHORT_SHA="${GITHUB_SHA::7}"
+          export NOW_UTC="$(date -u '+%Y-%m-%d %H:%M:%SZ')"
 
-          [ -z "$SUCCESS_COUNT" ] && SUCCESS_COUNT="0"
-          [ -z "$FAIL_COUNT" ] && FAIL_COUNT="0"
-          [ -z "$TOTAL_COUNT" ] && TOTAL_COUNT="0"
+          [ -z "$SUCCESS_COUNT" ] && export SUCCESS_COUNT="0"
+          [ -z "$FAIL_COUNT" ] && export FAIL_COUNT="0"
+          [ -z "$TOTAL_COUNT" ] && export TOTAL_COUNT="0"
 
           if [ "$EVENT_NAME" = "schedule" ] && [ -n "$EVENT_SCHEDULE" ]; then
-            TRIGGER="$EVENT_NAME ($EVENT_SCHEDULE)"
+            export TRIGGER="$EVENT_NAME ($EVENT_SCHEDULE)"
           else
-            TRIGGER="$EVENT_NAME"
+            export TRIGGER="$EVENT_NAME"
           fi
 
-          if [ "$JOB_STATUS" = "success" ]; then
-            EMOJI="✅"
-            STATUS_TEXT="SUCCESS"
-          else
-            EMOJI="❌"
-            STATUS_TEXT="FAILURE"
-          fi
+          node <<'NODE'
+          const fs = require("fs");
 
-          SAFE_ERROR="$(printf '%s' "$ERROR_MESSAGE" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-          SAFE_PROJECT_LIST="$(printf '%s' "$PROJECT_LIST" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-
-          if [ -n "$SAFE_ERROR" ]; then
-            ERROR_SECTION=',{"type":"section","text":{"type":"mrkdwn","text":"*Error:* `'"$SAFE_ERROR"'`"}}'
-          else
-            ERROR_SECTION=''
-          fi
-
-          if [ -n "$SAFE_PROJECT_LIST" ]; then
-            PROJECT_SECTION=',{"type":"section","text":{"type":"mrkdwn","text":"*Projects hit:*\n'"$SAFE_PROJECT_LIST"'"}}'
-          else
-            PROJECT_SECTION=''
-          fi
-
-          cat > payload.json <<EOF
-          {
-            "text": "$EMOJI Supabase keepalive $STATUS_TEXT for ${{ github.repository }}",
-            "blocks": [
-              {
-                "type": "header",
-                "text": { "type": "plain_text", "text": "$EMOJI Supabase keepalive $STATUS_TEXT" }
-              },
-              {
-                "type": "section",
-                "fields": [
-                  { "type": "mrkdwn", "text": "*Repository:*\\n\`${{ github.repository }}\`" },
-                  { "type": "mrkdwn", "text": "*Workflow:*\\n\`${{ github.workflow }}\`" },
-                  { "type": "mrkdwn", "text": "*Status:*\\n$STATUS_TEXT" },
-                  { "type": "mrkdwn", "text": "*Trigger:*\\n\`$TRIGGER\`" },
-                  { "type": "mrkdwn", "text": "*Actor:*\\n\`${{ github.actor }}\`" },
-                  { "type": "mrkdwn", "text": "*Branch:*\\n\`${{ github.ref_name }}\`" },
-                  { "type": "mrkdwn", "text": "*Commit:*\\n<${COMMIT_URL}|\`${SHORT_SHA}\`>" },
-                  { "type": "mrkdwn", "text": "*Ping Summary:*\\n\`${SUCCESS_COUNT} ok / ${FAIL_COUNT} failed / ${TOTAL_COUNT} total\`" }
-                ]
-              },
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "*Run:* <${RUN_URL}|#${{ github.run_number }} (attempt ${{ github.run_attempt }})>"
-                }
-              }
-              $PROJECT_SECTION
-              $ERROR_SECTION,
-              {
-                "type": "context",
-                "elements": [
-                  { "type": "mrkdwn", "text": "Generated at ${NOW_UTC}" }
-                ]
-              }
-            ]
+          function slackEscape(value) {
+            return String(value ?? "")
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;");
           }
-          EOF
+
+          const jobStatus = process.env.JOB_STATUS || "failure";
+          const emoji = jobStatus === "success" ? "✅" : "❌";
+          const statusText = jobStatus === "success" ? "SUCCESS" : "FAILURE";
+          const successCount = process.env.SUCCESS_COUNT || "0";
+          const failCount = process.env.FAIL_COUNT || "0";
+          const totalCount = process.env.TOTAL_COUNT || "0";
+          const trigger = slackEscape(process.env.TRIGGER || process.env.EVENT_NAME || "unknown");
+          const errorMessage = slackEscape(process.env.ERROR_MESSAGE || "");
+          const projectEntries = (process.env.PROJECT_LIST || "")
+            .split(" | ")
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .map((entry) => {
+              const match = entry.match(/^(.*) - (https?:\/\/.*)$/);
+              if (!match) return `• ${slackEscape(entry)}`;
+              const name = slackEscape(match[1].trim());
+              const url = match[2].trim();
+              return `• *${name}*\n<${url}|${slackEscape(url)}>`;
+            })
+            .join("\n\n");
+
+          const blocks = [
+            {
+              type: "header",
+              text: { type: "plain_text", text: `${emoji} Supabase keepalive ${statusText}` }
+            },
+            {
+              type: "section",
+              fields: [
+                { type: "mrkdwn", text: `*Repository:*\n\`${slackEscape(process.env.GITHUB_REPOSITORY)}\`` },
+                { type: "mrkdwn", text: `*Workflow:*\n\`${slackEscape(process.env.GITHUB_WORKFLOW)}\`` },
+                { type: "mrkdwn", text: `*Status:*\n${statusText}` },
+                { type: "mrkdwn", text: `*Trigger:*\n\`${trigger}\`` },
+                { type: "mrkdwn", text: `*Actor:*\n\`${slackEscape(process.env.GITHUB_ACTOR)}\`` },
+                { type: "mrkdwn", text: `*Branch:*\n\`${slackEscape(process.env.GITHUB_REF_NAME)}\`` },
+                { type: "mrkdwn", text: `*Commit:*\n<${process.env.COMMIT_URL}|\`${slackEscape(process.env.SHORT_SHA)}\`>` },
+                { type: "mrkdwn", text: `*Ping Summary:*\n\`${successCount} ok / ${failCount} failed / ${totalCount} total\`` }
+              ]
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Run:* <${process.env.RUN_URL}|#${slackEscape(process.env.GITHUB_RUN_NUMBER)} (attempt ${slackEscape(process.env.GITHUB_RUN_ATTEMPT)})>`
+              }
+            }
+          ];
+
+          if (projectEntries) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: `*Projects hit:*\n\n${projectEntries}` }
+            });
+          }
+
+          if (errorMessage) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: `*Error:*\n${errorMessage}` }
+            });
+          }
+
+          blocks.push({
+            type: "context",
+            elements: [
+              { type: "mrkdwn", text: `Generated at ${slackEscape(process.env.NOW_UTC)}` }
+            ]
+          });
+
+          fs.writeFileSync(
+            "payload.json",
+            JSON.stringify({
+              text: `${emoji} Supabase keepalive ${statusText} for ${process.env.GITHUB_REPOSITORY}`,
+              blocks
+            })
+          );
+          NODE
 
           curl -sS -X POST -H "Content-type: application/json" --data @payload.json "$SLACK_WEBHOOK_URL"
