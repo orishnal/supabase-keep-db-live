@@ -2,8 +2,8 @@ name: Ping Supabase to Prevent Pausing
 
 on:
   schedule:
-    # Run twice daily away from the top of the hour to reduce scheduler drops.
-    - cron: "17 */12 * * *"
+    # Run every 6 hours away from the top of the hour to reduce scheduler drops.
+    - cron: "17 */6 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -16,153 +16,13 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Ping Supabase Databases
         id: ping
-        env:
-          SUPABASE_CONFIGS: ${{ secrets.SUPABASE_CONFIGS }}
         run: |
-          node <<'NODE'
-          const fs = require("fs");
-
-          const REQUEST_TIMEOUT_MS = 15000;
-          const MAX_RETRIES = 3;
-          const RETRY_DELAY_MS = 5000;
-
-          function setOutput(name, value) {
-          if (!process.env.GITHUB_OUTPUT) return;
-          const safe = String(value ?? "").replace(/\r?\n/g, " ");
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${safe}\n`);
-          }
-
-          function sleep(ms) {
-          return new Promise((resolve) => setTimeout(resolve, ms));
-          }
-
-          async function pingConfig(config, index, total) {
-          const dbName = config.name || `Database ${index + 1}`;
-          const url = String(config.url || "").replace(/\/$/, "");
-          const key = config.key;
-
-          if (!url || !key) {
-          throw new Error(`Missing url or key for ${dbName}`);
-          }
-
-          const endpoint = `${url}/rest/v1/`;
-          let lastError = null;
-
-          for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-          try {
-          console.log(`\n[${index + 1}/${total}] ${dbName}`);
-          console.log("URL:", url);
-          console.log(`Attempt: ${attempt}/${MAX_RETRIES}`);
-
-          const startTime = Date.now();
-          const response = await fetch(endpoint, {
-          method: "GET",
-          headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`,
-          "User-Agent": "github-actions-supabase-keepalive",
-          Accept: "application/json"
-          },
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-          });
-          const duration = Date.now() - startTime;
-
-          if (response.status >= 500) {
-          throw new Error(`Server returned status ${response.status}`);
-          }
-
-          console.log(`Success! Status: ${response.status} Response time: ${duration}ms`);
-          return;
-          } catch (err) {
-          lastError = err;
-          console.error(`Attempt ${attempt} failed: ${err.message}`);
-
-          if (attempt < MAX_RETRIES) {
-          console.log(`Retrying in ${RETRY_DELAY_MS / 1000}s...`);
-          await sleep(RETRY_DELAY_MS);
-          }
-          }
-          }
-
-          throw lastError || new Error(`Ping failed for ${dbName}`);
-          }
-
-          (async () => {
-          let successCount = 0;
-          let failCount = 0;
-          let totalCount = 0;
-          let projectList = "";
-
-          try {
-          if (!process.env.SUPABASE_CONFIGS) {
-          throw new Error("Missing SUPABASE_CONFIGS secret. Please add it in GitHub Settings.");
-          }
-
-          const configs = JSON.parse(process.env.SUPABASE_CONFIGS);
-
-          if (!Array.isArray(configs) || configs.length === 0) {
-          throw new Error("SUPABASE_CONFIGS must be a non-empty array of database configurations.");
-          }
-
-          totalCount = configs.length;
-          projectList = configs
-            .map((config, index) => {
-              const name = config.name || `Database ${index + 1}`;
-              const url = String(config.url || "").replace(/\/$/, "");
-              return `${name} - ${url}`;
-            })
-            .join(" | ");
-
-          console.log("Pinging", totalCount, "database(s)...");
-          console.log("Projects:", projectList);
-          console.log("Timestamp:", new Date().toISOString());
-          console.log("-".repeat(60));
-
-          for (let i = 0; i < configs.length; i++) {
-          try {
-          await pingConfig(configs[i], i, configs.length);
-          successCount++;
-          } catch (err) {
-          console.error("Failed:", err.message);
-          failCount++;
-          }
-          }
-
-          console.log("\n" + "-".repeat(60));
-          console.log("Summary:");
-          console.log("  Successful:", successCount);
-          console.log("  Failed:", failCount);
-          console.log("  Total:", totalCount);
-
-          setOutput("success_count", successCount);
-          setOutput("fail_count", failCount);
-          setOutput("total_count", totalCount);
-          setOutput("project_list", projectList);
-          setOutput("error_message", "");
-
-          if (failCount > 0) {
-          process.exit(1);
-          }
-
-          console.log("\nAll databases pinged successfully!");
-          } catch (err) {
-          console.error("\nFatal error:", err.message);
-          console.error("Make sure SUPABASE_CONFIGS is set as a JSON array:");
-          console.error('[{"name":"My DB","url":"https://xxx.supabase.co","key":"your-key"}]');
-
-          setOutput("success_count", successCount);
-          setOutput("fail_count", failCount);
-          setOutput("total_count", totalCount);
-          setOutput("project_list", projectList);
-          setOutput("error_message", err.message);
-
-          process.exit(1);
-          }
-          })();
-          NODE
+          node ping-supabase.js
 
       - name: Notify Slack
         if: ${{ always() }}
