@@ -52,5 +52,11 @@
     "url": "https://upmornmznyfvenlhxuau.supabase.co",
     "key": "sb_publishable_toVZHGh35mT7p2LXokWlIg_8sqoVPQ5",
     "rpc": "keepalive_ping"
-  }
+  },
+  {
+  "name": "AuctionGraph",
+  "url": "https://kzmdivgccbrhoyicdrkz.supabase.co",
+  "key": "sb_publishable_WE-KkcxNP42JH2a1Mk8CSQ_ZdJS87yr",
+  "rpc": "keepalive_ping"
+}
 ]
