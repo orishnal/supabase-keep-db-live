@@ -54,9 +54,21 @@
     "rpc": "keepalive_ping"
   },
   {
-  "name": "AuctionGraph",
-  "url": "https://kzmdivgccbrhoyicdrkz.supabase.co",
-  "key": "sb_publishable_WE-KkcxNP42JH2a1Mk8CSQ_ZdJS87yr",
-  "rpc": "keepalive_ping"
-}
+    "name": "Apollo Auctions Auction Graph",
+    "url": "https://otpjykhpkymqkdvwojqv.supabase.co",
+    "key": "sb_publishable_U3v_O2nzjLCttsGxk9OT5g_lblK-b31",
+    "rpc": "keepalive_ping"
+  },
+  {
+    "name": "Auction Graph (SYD)",
+    "url": "https://vpakrdrrpimuxunquspb.supabase.co",
+    "key": "sb_publishable_Yt7y7lXRqbjcu05SAU9q-A_t2-ryUe1",
+    "rpc": "keepalive_ping"
+  },
+  {
+    "name": "Gallery Flow",
+    "url": "https://uspcfatzzcluuwyztbgq.supabase.co",
+    "key": "sb_publishable_mrLS5Fv0iYh-bxZSoJX9dQ_To42M2sR",
+    "rpc": "keepalive_ping"
+  }
 ]
