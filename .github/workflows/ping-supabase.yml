@@ -33,6 +33,7 @@ jobs:
           FAIL_COUNT: ${{ steps.ping.outputs.fail_count }}
           TOTAL_COUNT: ${{ steps.ping.outputs.total_count }}
           PROJECT_LIST: ${{ steps.ping.outputs.project_list }}
+          FAILED_PROJECTS: ${{ steps.ping.outputs.failed_projects }}
           ERROR_MESSAGE: ${{ steps.ping.outputs.error_message }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SCHEDULE: ${{ github.event.schedule }}
@@ -75,16 +76,24 @@ jobs:
           const totalCount = process.env.TOTAL_COUNT || "0";
           const trigger = slackEscape(process.env.TRIGGER || process.env.EVENT_NAME || "unknown");
           const errorMessage = slackEscape(process.env.ERROR_MESSAGE || "");
+          let failedProjects = [];
+          try {
+            failedProjects = JSON.parse(process.env.FAILED_PROJECTS || "[]");
+          } catch (e) {
+            failedProjects = [];
+          }
           const projectEntries = (process.env.PROJECT_LIST || "")
             .split(" | ")
             .map((entry) => entry.trim())
             .filter(Boolean)
             .map((entry) => {
-              const match = entry.match(/^(.*) - (https?:\/\/.*)$/);
+              const match = entry.match(/^(.*) - (https?:\/\/\S+)(?: - (.*))?$/);
               if (!match) return `• ${slackEscape(entry)}`;
               const name = slackEscape(match[1].trim());
               const url = match[2].trim();
-              return `• *${name}*\n<${url}|${slackEscape(url)}>`;
+              const mode = match[3] ? slackEscape(match[3].trim()) : "";
+              const modeSuffix = mode ? ` (${mode})` : "";
+              return `• *${name}*${modeSuffix}\n<${url}|${slackEscape(url)}>`;
             })
             .join("\n\n");
 
@@ -119,6 +128,16 @@ jobs:
             blocks.push({
               type: "section",
               text: { type: "mrkdwn", text: `*Projects hit:*\n\n${projectEntries}` }
+            });
+          }
+
+          if (Array.isArray(failedProjects) && failedProjects.length > 0) {
+            const failedText = failedProjects
+              .map((p) => `• *${slackEscape(p.name)}*\n${slackEscape(p.error)}`)
+              .join("\n\n");
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: `*Failed projects:*\n\n${failedText}` }
             });
           }
 
