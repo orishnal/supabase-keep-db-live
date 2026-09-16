@@ -145,6 +145,7 @@ function isEnabled(config) {
   let totalCount = 0;
   let projectList = "";
   let configSource = "";
+  let failedProjects = [];
 
   try {
     const loaded = loadConfigs();
@@ -186,12 +187,14 @@ function isEnabled(config) {
     console.log("-".repeat(60));
 
     for (let i = 0; i < enabledConfigs.length; i++) {
+      const dbName = enabledConfigs[i].name || `Database ${i + 1}`;
       try {
         await pingConfig(enabledConfigs[i], i, enabledConfigs.length);
         successCount++;
       } catch (error) {
         console.error("Failed:", error.message);
         failCount++;
+        failedProjects.push({ name: dbName, error: error.message });
       }
     }
 
@@ -208,6 +211,7 @@ function isEnabled(config) {
     setOutput("project_list", projectList);
     setOutput("config_source", configSource);
     setOutput("error_message", "");
+    setOutput("failed_projects", JSON.stringify(failedProjects));
 
     if (failCount > 0) {
       process.exit(1);
@@ -227,6 +231,7 @@ function isEnabled(config) {
     setOutput("project_list", projectList);
     setOutput("config_source", configSource);
     setOutput("error_message", error.message);
+    setOutput("failed_projects", JSON.stringify(failedProjects));
     process.exit(1);
   }
 })();
