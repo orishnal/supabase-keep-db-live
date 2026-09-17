@@ -1,0 +1,176 @@
+name: Ping PowerSync to Prevent Deprovisioning
+
+on:
+  schedule:
+    # Daily, well inside PowerSync's ~7-day inactivity window.
+    - cron: "23 8 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: powersync-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Ping PowerSync Instances
+        id: ping
+        env:
+          SUPABASE_LEGACY_JWT: ${{ secrets.SUPABASE_LEGACY_JWT }}
+        run: |
+          node ping-powersync.js
+
+      - name: Notify Slack
+        if: ${{ always() }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+          SUCCESS_COUNT: ${{ steps.ping.outputs.success_count }}
+          FAIL_COUNT: ${{ steps.ping.outputs.fail_count }}
+          TOTAL_COUNT: ${{ steps.ping.outputs.total_count }}
+          INSTANCE_LIST: ${{ steps.ping.outputs.instance_list }}
+          FAILED_INSTANCES: ${{ steps.ping.outputs.failed_instances }}
+          ERROR_MESSAGE: ${{ steps.ping.outputs.error_message }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is not set. Skipping Slack notification."
+            exit 0
+          fi
+
+          export RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          export COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          export SHORT_SHA="${GITHUB_SHA::7}"
+          export NOW_UTC="$(date -u '+%Y-%m-%d %H:%M:%SZ')"
+
+          [ -z "$SUCCESS_COUNT" ] && export SUCCESS_COUNT="0"
+          [ -z "$FAIL_COUNT" ] && export FAIL_COUNT="0"
+          [ -z "$TOTAL_COUNT" ] && export TOTAL_COUNT="0"
+
+          if [ "$EVENT_NAME" = "schedule" ] && [ -n "$EVENT_SCHEDULE" ]; then
+            export TRIGGER="$EVENT_NAME ($EVENT_SCHEDULE)"
+          else
+            export TRIGGER="$EVENT_NAME"
+          fi
+
+          node <<'NODE'
+          const fs = require("fs");
+
+          function slackEscape(value) {
+            return String(value ?? "")
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;");
+          }
+
+          const jobStatus = process.env.JOB_STATUS || "failure";
+          const emoji = jobStatus === "success" ? "✅" : "❌";
+          const statusText = jobStatus === "success" ? "SUCCESS" : "FAILURE";
+          const successCount = process.env.SUCCESS_COUNT || "0";
+          const failCount = process.env.FAIL_COUNT || "0";
+          const totalCount = process.env.TOTAL_COUNT || "0";
+          const trigger = slackEscape(process.env.TRIGGER || process.env.EVENT_NAME || "unknown");
+          const errorMessage = slackEscape(process.env.ERROR_MESSAGE || "");
+          const instanceEntries = (process.env.INSTANCE_LIST || "")
+            .split(" | ")
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .map((entry) => {
+              const match = entry.match(/^(.*) - (https?:\/\/\S+)$/);
+              if (!match) return `• ${slackEscape(entry)}`;
+              const name = slackEscape(match[1].trim());
+              const url = match[2].trim();
+              return `• *${name}*\n<${url}|${slackEscape(url)}>`;
+            })
+            .join("\n\n");
+
+          let failedInstances = [];
+          try {
+            failedInstances = JSON.parse(process.env.FAILED_INSTANCES || "[]");
+          } catch (e) {
+            failedInstances = [];
+          }
+
+          const blocks = [
+            {
+              type: "header",
+              text: { type: "plain_text", text: `${emoji} PowerSync keepalive ${statusText}` }
+            },
+            {
+              type: "section",
+              fields: [
+                { type: "mrkdwn", text: `*Repository:*\n\`${slackEscape(process.env.GITHUB_REPOSITORY)}\`` },
+                { type: "mrkdwn", text: `*Workflow:*\n\`${slackEscape(process.env.GITHUB_WORKFLOW)}\`` },
+                { type: "mrkdwn", text: `*Status:*\n${statusText}` },
+                { type: "mrkdwn", text: `*Trigger:*\n\`${trigger}\`` },
+                { type: "mrkdwn", text: `*Actor:*\n\`${slackEscape(process.env.GITHUB_ACTOR)}\`` },
+                { type: "mrkdwn", text: `*Branch:*\n\`${slackEscape(process.env.GITHUB_REF_NAME)}\`` },
+                { type: "mrkdwn", text: `*Commit:*\n<${process.env.COMMIT_URL}|\`${slackEscape(process.env.SHORT_SHA)}\`>` },
+                { type: "mrkdwn", text: `*Ping Summary:*\n\`${successCount} ok / ${failCount} failed / ${totalCount} total\`` }
+              ]
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Run:* <${process.env.RUN_URL}|#${slackEscape(process.env.GITHUB_RUN_NUMBER)} (attempt ${slackEscape(process.env.GITHUB_RUN_ATTEMPT)})>`
+              }
+            }
+          ];
+
+          if (instanceEntries) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: `*Instances hit:*\n\n${instanceEntries}` }
+            });
+          }
+
+          if (Array.isArray(failedInstances) && failedInstances.length > 0) {
+            const failedText = failedInstances
+              .map((i) => `• *${slackEscape(i.name)}*\n${slackEscape(i.error)}`)
+              .join("\n\n");
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: `*Failed instances:*\n\n${failedText}` }
+            });
+          }
+
+          if (errorMessage) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: `*Error:*\n${errorMessage}` }
+            });
+          }
+
+          blocks.push({
+            type: "context",
+            elements: [
+              { type: "mrkdwn", text: `Generated at ${slackEscape(process.env.NOW_UTC)}` }
+            ]
+          });
+
+          fs.writeFileSync(
+            "payload.json",
+            JSON.stringify({
+              text: `${emoji} PowerSync keepalive ${statusText} for ${process.env.GITHUB_REPOSITORY}`,
+              blocks
+            })
+          );
+          NODE
+
+          curl -sS -X POST -H "Content-type: application/json" --data @payload.json "$SLACK_WEBHOOK_URL"
