@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Auction Graph - Development",
+    "endpoint": "https://6a95273f02481fb31b928ac2.powersync.journeyapps.com",
+    "jwtSecretEnv": "SUPABASE_LEGACY_JWT"
+  },
+  {
+    "name": "Auction Graph - Production",
+    "endpoint": "https://6a952740a77ca1231d2435b3.powersync.journeyapps.com",
+    "jwtSecretEnv": "SUPABASE_LEGACY_JWT"
+  }
+]
