@@ -5,10 +5,12 @@
   "main": "index.js",
   "scripts": {
     "ping": "node ping-supabase.js",
+    "ping:powersync": "node ping-powersync.js",
     "test": "echo \"No tests specified\" && exit 0"
   },
   "keywords": [
     "supabase",
+    "powersync",
     "github-actions",
     "automation",
     "database",
@@ -17,7 +19,10 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "dotenv": "^17.2.3"
+    "@powersync/node": "^1.0.1",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.2.3",
+    "jsonwebtoken": "^9.0.3"
   },
   "engines": {
     "node": ">=18.0.0"
